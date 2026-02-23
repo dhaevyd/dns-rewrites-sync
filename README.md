@@ -1,0 +1,1 @@
+# dns-rewrites-sync
