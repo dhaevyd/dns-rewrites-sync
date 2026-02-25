@@ -84,7 +84,7 @@ if pip_install dns-rewrites-sync --quiet 2>/dev/null; then
 else
     warn "Not on PyPI yet — installing from source"
     TMP_DIR=$(mktemp -d)
-    trap 'rm -rf "$TMP_DIR"' EXIT
+    trap '$SUDO rm -rf "$TMP_DIR" 2>/dev/null || true' EXIT
     git clone --depth 1 "$REPO" "$TMP_DIR" --quiet
     pip_install "$TMP_DIR" --quiet
     info "Installed from source"
