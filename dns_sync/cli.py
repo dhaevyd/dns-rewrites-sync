@@ -309,10 +309,16 @@ class CLI:
                 if not spoke.test_connection():
                     print("unreachable, skipping")
                     continue
-                stats = hub.sync_records(spoke, dry_run=args.dry_run)
+                try:
+                    stats = hub.sync_records(spoke, dry_run=args.dry_run)
+                except Exception as e:
+                    print(f"failed ({e})")
+                    continue
                 total_added += stats['added']
                 total_removed += stats['removed']
-                print(f"+{stats['added']} added, -{stats['removed']} removed")
+                conflicts = stats.get('conflicts', 0)
+                suffix = f", ⚠️  {conflicts} failed" if conflicts else ""
+                print(f"+{stats['added']} added, -{stats['removed']} removed{suffix}")
 
         print(f"\n✅ Sync complete: +{total_added} added, -{total_removed} removed")
 

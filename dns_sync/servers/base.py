@@ -130,13 +130,21 @@ class DNSServer(ABC):
             # Add new records
             for record_str in to_add:
                 record = DNSRecord.from_a_string(record_str) if record_type == 'A' else DNSRecord.from_cname_string(record_str)
-                if target_server.add_record(record):
-                    stats['added'] += 1
-            
+                try:
+                    if target_server.add_record(record):
+                        stats['added'] += 1
+                except Exception as e:
+                    logger.error(f"Failed to add {record_str}: {e}")
+                    stats['conflicts'] += 1
+
             # Remove old records
             for record_str in to_remove:
                 record = DNSRecord.from_a_string(record_str) if record_type == 'A' else DNSRecord.from_cname_string(record_str)
-                if target_server.delete_record(record):
-                    stats['removed'] += 1
+                try:
+                    if target_server.delete_record(record):
+                        stats['removed'] += 1
+                except Exception as e:
+                    logger.error(f"Failed to remove {record_str}: {e}")
+                    stats['conflicts'] += 1
         
         return stats
