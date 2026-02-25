@@ -18,9 +18,16 @@ class SecretsManager:
         self.cipher = None
     
     def _ensure_dirs(self):
-        """Create necessary directories with proper permissions"""
-        os.makedirs(self.config_dir, mode=0o750, exist_ok=True)
-        os.makedirs(self.secrets_dir, mode=0o750, exist_ok=True)
+        """Create config directories if they don't already exist."""
+        for path in (self.config_dir, self.secrets_dir):
+            if not os.path.exists(path):
+                try:
+                    os.makedirs(path, mode=0o770, exist_ok=True)
+                except PermissionError:
+                    print(f"❌ Cannot access {path}")
+                    print("   Either run as root for first-time setup, or ensure you are")
+                    print("   in the 'dns-sync' group and have logged out and back in.")
+                    raise SystemExit(1)
     
     def init_master_key(self, password=None):
         """Initialize master key (first run)"""
