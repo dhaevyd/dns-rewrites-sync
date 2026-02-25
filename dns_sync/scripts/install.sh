@@ -22,30 +22,71 @@ warn()    { echo -e "${YELLOW}[!]${NC} $*"; }
 error()   { echo -e "${RED}[✘]${NC} $*" >&2; exit 1; }
 step()    { echo -e "\n${YELLOW}──${NC} $*"; }
 
-# ── Preflight checks ───────────────────────────────────────────────────────
+# ── Sudo helper ────────────────────────────────────────────────────────────
+[[ $EUID -ne 0 ]] && SUDO="sudo" || SUDO=""
+
+# ── Detect package manager and install missing deps ────────────────────────
 step "Checking dependencies"
 
-command -v python3 &>/dev/null  || error "python3 not found. Install it first."
-command -v pip3    &>/dev/null  || error "pip3 not found. Install python3-pip first."
-command -v systemctl &>/dev/null || error "systemctl not found. This installer requires systemd."
-[[ $EUID -ne 0 ]] && SUDO="sudo" || SUDO=""
+install_packages() {
+    if command -v apt-get &>/dev/null; then
+        $SUDO apt-get update -qq
+        $SUDO apt-get install -y -qq "$@"
+    elif command -v dnf &>/dev/null; then
+        $SUDO dnf install -y -q "$@"
+    elif command -v yum &>/dev/null; then
+        $SUDO yum install -y -q "$@"
+    elif command -v pacman &>/dev/null; then
+        $SUDO pacman -Sy --noconfirm "$@"
+    else
+        error "No supported package manager found (apt/dnf/yum/pacman). Install dependencies manually: $*"
+    fi
+}
+
+command -v systemctl &>/dev/null || error "systemctl not found — this installer requires systemd."
+
+if ! command -v python3 &>/dev/null; then
+    warn "python3 not found — installing..."
+    install_packages python3
+fi
+
+if ! command -v pip3 &>/dev/null; then
+    warn "pip3 not found — installing..."
+    if command -v apt-get &>/dev/null; then
+        install_packages python3-pip
+    elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+        install_packages python3-pip
+    elif command -v pacman &>/dev/null; then
+        install_packages python-pip
+    fi
+fi
+
+if ! command -v git &>/dev/null; then
+    warn "git not found — installing..."
+    install_packages git
+fi
 
 PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 PYTHON_OK=$(python3 -c 'import sys; print("yes" if sys.version_info >= (3,8) else "no")')
 [[ "$PYTHON_OK" == "yes" ]] || error "Python 3.8+ required (found $PYTHON_VERSION)"
-info "Python $PYTHON_VERSION OK"
+info "Python $PYTHON_VERSION, pip3, git — all good"
 
 # ── Install package ────────────────────────────────────────────────────────
 step "Installing dns-rewrites-sync"
 
-if pip3 install dns-rewrites-sync --quiet 2>/dev/null; then
+pip_install() {
+    pip3 install "$@" --break-system-packages 2>/dev/null \
+        || pip3 install "$@"
+}
+
+if pip_install dns-rewrites-sync --quiet 2>/dev/null; then
     info "Installed from PyPI"
 else
     warn "Not on PyPI yet — installing from source"
     TMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TMP_DIR"' EXIT
     git clone --depth 1 "$REPO" "$TMP_DIR" --quiet
-    pip3 install "$TMP_DIR" --quiet
+    pip_install "$TMP_DIR" --quiet
     info "Installed from source"
 fi
 
