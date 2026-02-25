@@ -75,8 +75,8 @@ info "Python $PYTHON_VERSION, pip3, git — all good"
 step "Installing dns-rewrites-sync"
 
 pip_install() {
-    pip3 install "$@" --break-system-packages 2>/dev/null \
-        || pip3 install "$@"
+    $SUDO pip3 install "$@" --break-system-packages 2>/dev/null \
+        || $SUDO pip3 install "$@"
 }
 
 if pip_install dns-rewrites-sync --quiet 2>/dev/null; then
