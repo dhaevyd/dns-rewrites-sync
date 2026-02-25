@@ -79,3 +79,13 @@ SERVER_TYPES = {
         "default_port": 80
     }
 }
+
+
+def get_server_types():
+    """Return list of (key, name, description) tuples for CLI display."""
+    return [(k, v["name"], v["description"]) for k, v in SERVER_TYPES.items()]
+
+
+def get_auth_fields(server_type):
+    """Return auth field definitions for a given server type."""
+    return SERVER_TYPES.get(server_type, {}).get("auth_fields", [])

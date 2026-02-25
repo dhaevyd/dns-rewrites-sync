@@ -11,8 +11,8 @@ from .servers import create_server
 
 class CLI:
     def __init__(self):
-        self.config = ConfigManager()
-        self.secrets = SecretsManager()
+        self.config = None
+        self.secrets = None
         self.parser = self._create_parser()
     
     def _create_parser(self):
@@ -52,16 +52,20 @@ class CLI:
     
     def run(self):
         args = self.parser.parse_args()
-        
+
         if not args.command:
             self.parser.print_help()
             return
-        
+
+        # Initialise managers now that we know a command is actually running
+        self.config = ConfigManager()
+        self.secrets = SecretsManager()
+
         # Handle init separately (doesn't need master key)
         if args.command == 'init':
             self._cmd_init()
             return
-        
+
         # All other commands need master key
         if not self.secrets.load_master_key():
             print("❌ Master key not initialized. Run 'dns-sync init' first")

@@ -5,7 +5,7 @@ import base64
 import getpass
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 class SecretsManager:
     """Manages encrypted credentials"""
@@ -36,7 +36,7 @@ class SecretsManager:
         
         # Generate key from password
         salt = os.urandom(16)
-        kdf = PBKDF2(
+        kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
@@ -78,7 +78,7 @@ class SecretsManager:
             # Re-derive from password (used for key rotation).
             with open(self.key_file + ".salt", 'rb') as f:
                 salt = f.read()
-            kdf = PBKDF2(
+            kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=32,
                 salt=salt,
