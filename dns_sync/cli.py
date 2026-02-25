@@ -47,7 +47,10 @@ class CLI:
         sync_parser = subparsers.add_parser('sync', help='Run sync')
         sync_parser.add_argument('--server', help='Specific server to sync')
         sync_parser.add_argument('--dry-run', action='store_true', help='Preview only')
-        
+
+        # update command
+        subparsers.add_parser('update', help='Update to the latest version from GitHub')
+
         return parser
     
     def run(self):
@@ -61,9 +64,12 @@ class CLI:
         self.config = ConfigManager()
         self.secrets = SecretsManager()
 
-        # Handle init separately (doesn't need master key)
+        # Commands that don't need the master key
         if args.command == 'init':
             self._cmd_init()
+            return
+        if args.command == 'update':
+            self._cmd_update()
             return
 
         # All other commands need master key
@@ -309,6 +315,38 @@ class CLI:
                 print(f"+{stats['added']} added, -{stats['removed']} removed")
 
         print(f"\n✅ Sync complete: +{total_added} added, -{total_removed} removed")
+
+    def _cmd_update(self):
+        """Pull latest version from GitHub and reinstall."""
+        import subprocess
+        import tempfile
+        import os
+
+        repo = "https://github.com/dhaevyd/dns-rewrites-sync.git"
+        print("🔄 Updating dns-rewrites-sync from GitHub...")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # Clone latest
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1", repo, tmp],
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                print(f"❌ Git clone failed: {result.stderr.strip()}")
+                return
+
+            # Reinstall (try with sudo, fall back without)
+            pip_cmd = ["pip3", "install", tmp, "--break-system-packages", "-q"]
+            for cmd in [["sudo"] + pip_cmd, pip_cmd]:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    break
+            else:
+                print(f"❌ Install failed: {result.stderr.strip()}")
+                return
+
+        print("✅ Updated successfully. Restart any running services to apply:")
+        print("   sudo systemctl restart dns-sync.service")
 
 def main():
     cli = CLI()
