@@ -23,7 +23,7 @@ class ConfigManager:
         """Save config to file"""
         with open(self.config_file, 'w') as f:
             yaml.dump(self.config, f, default_flow_style=False)
-        os.chmod(self.config_file, 0o600)
+        os.chmod(self.config_file, 0o660)
     
     def add_server(self, server_data):
         """Add a new server configuration"""
