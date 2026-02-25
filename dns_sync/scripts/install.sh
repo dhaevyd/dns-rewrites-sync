@@ -107,8 +107,15 @@ for dir in "$CONFIG_DIR/secrets" "$DATA_DIR"; do
 done
 
 $SUDO chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$DATA_DIR"
-$SUDO chmod 750 "$CONFIG_DIR" "$CONFIG_DIR/secrets" "$DATA_DIR"
+$SUDO chmod 770 "$CONFIG_DIR" "$CONFIG_DIR/secrets" "$DATA_DIR"
 info "Directories ready"
+
+# Add the invoking user to the dns-sync group so they can run commands without sudo
+INVOKING_USER="${SUDO_USER:-$USER}"
+if [[ -n "$INVOKING_USER" && "$INVOKING_USER" != "root" ]]; then
+    $SUDO usermod -aG "$SERVICE_USER" "$INVOKING_USER"
+    info "Added '$INVOKING_USER' to group '$SERVICE_USER' — log out and back in to apply"
+fi
 
 # ── Systemd units (embedded so curl|bash works) ────────────────────────────
 step "Installing systemd units"
