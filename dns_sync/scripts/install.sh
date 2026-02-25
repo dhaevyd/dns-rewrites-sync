@@ -79,6 +79,10 @@ pip_install() {
         || $SUDO pip3 install "$@"
 }
 
+# Remove any stale user-local install that could shadow the system install
+pip3 uninstall dns-rewrites-sync -y --break-system-packages 2>/dev/null \
+    || pip3 uninstall dns-rewrites-sync -y 2>/dev/null || true
+
 if pip_install dns-rewrites-sync --quiet 2>/dev/null; then
     info "Installed from PyPI"
 else
@@ -159,12 +163,13 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo " ✅  DNS Rewrites Sync installed!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "Next steps:"
-echo "  1. Init master key:       sudo -u $SERVICE_USER dns-sync init"
-echo "  2. Add a hub server:      sudo -u $SERVICE_USER dns-sync add-server"
-echo "  3. Add spoke server(s):   sudo -u $SERVICE_USER dns-sync add-server"
-echo "  4. Test a dry run:        sudo -u $SERVICE_USER dns-sync sync --dry-run"
-echo "  5. Run sync now:          sudo systemctl start dns-sync.service"
-echo "  6. Watch logs:            journalctl -u dns-sync.service -f"
-echo "  7. Check timer:           systemctl status dns-sync.timer"
+echo "Next steps (log out and back in first for group access to take effect):"
+echo "  1. Init master key:    dns-sync init"
+echo "  2. Add a hub server:   dns-sync add-server"
+echo "  3. Add spoke(s):       dns-sync add-server"
+echo "  4. Test a dry run:     dns-sync sync --dry-run"
+echo "  5. Run sync now:       sudo systemctl start dns-sync.service"
+echo "  6. Watch logs:         journalctl -u dns-sync.service -f"
+echo "  7. Check timer:        systemctl status dns-sync.timer"
+echo "  8. Future updates:     sudo dns-sync update"
 echo ""
