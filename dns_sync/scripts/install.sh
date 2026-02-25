@@ -1,48 +1,122 @@
 #!/bin/bash
-# One-liner installer for DNS Rewrites Sync
+# DNS Rewrites Sync - Installer
+# Works both as a curl | bash one-liner and when run directly from the repo.
+#
+# Usage:
+#   curl -sSL https://raw.githubusercontent.com/dhaevyd/dns-rewrites-sync/main/dns_sync/scripts/install.sh | bash
+#   bash dns_sync/scripts/install.sh
 
-set -e
+set -euo pipefail
 
-echo "🔧 Installing DNS Rewrites Sync..."
+REPO="https://github.com/dhaevyd/dns-rewrites-sync.git"
+SERVICE_USER="dns-sync"
+CONFIG_DIR="/etc/dns-sync"
+DATA_DIR="/var/lib/dns-sync"
+SERVICE_FILE="/etc/systemd/system/dns-sync.service"
+TIMER_FILE="/etc/systemd/system/dns-sync.timer"
 
-# Check Python
-if ! command -v python3 &> /dev/null; then
-    echo "❌ Python 3 not found"
-    exit 1
+# ── Colours ────────────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+info()    { echo -e "${GREEN}[✔]${NC} $*"; }
+warn()    { echo -e "${YELLOW}[!]${NC} $*"; }
+error()   { echo -e "${RED}[✘]${NC} $*" >&2; exit 1; }
+step()    { echo -e "\n${YELLOW}──${NC} $*"; }
+
+# ── Preflight checks ───────────────────────────────────────────────────────
+step "Checking dependencies"
+
+command -v python3 &>/dev/null  || error "python3 not found. Install it first."
+command -v pip3    &>/dev/null  || error "pip3 not found. Install python3-pip first."
+command -v systemctl &>/dev/null || error "systemctl not found. This installer requires systemd."
+[[ $EUID -ne 0 ]] && SUDO="sudo" || SUDO=""
+
+PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PYTHON_OK=$(python3 -c 'import sys; print("yes" if sys.version_info >= (3,8) else "no")')
+[[ "$PYTHON_OK" == "yes" ]] || error "Python 3.8+ required (found $PYTHON_VERSION)"
+info "Python $PYTHON_VERSION OK"
+
+# ── Install package ────────────────────────────────────────────────────────
+step "Installing dns-rewrites-sync"
+
+if pip3 install dns-rewrites-sync --quiet 2>/dev/null; then
+    info "Installed from PyPI"
+else
+    warn "Not on PyPI yet — installing from source"
+    TMP_DIR=$(mktemp -d)
+    trap 'rm -rf "$TMP_DIR"' EXIT
+    git clone --depth 1 "$REPO" "$TMP_DIR" --quiet
+    pip3 install "$TMP_DIR" --quiet
+    info "Installed from source"
 fi
 
-# Install package
-pip3 install dns-rewrites-sync
+# Verify the binary landed somewhere on PATH
+command -v dns-sync &>/dev/null || error "dns-sync binary not found on PATH after install"
+info "dns-sync $(dns-sync --version 2>/dev/null || echo '(installed)') ready"
 
-# Create directories
-sudo mkdir -p /etc/dns-sync/secrets
-sudo mkdir -p /var/lib/dns-sync
-sudo mkdir -p /var/log/dns-sync
+# ── System user & directories ──────────────────────────────────────────────
+step "Creating system user and directories"
 
-# Create user
-sudo useradd --system --home-dir /var/lib/dns-sync dns-sync 2>/dev/null || true
+$SUDO useradd --system --no-create-home --home-dir "$DATA_DIR" \
+    --shell /usr/sbin/nologin "$SERVICE_USER" 2>/dev/null \
+    && info "Created user '$SERVICE_USER'" \
+    || info "User '$SERVICE_USER' already exists"
 
-# Set permissions
-sudo chown -R dns-sync:dns-sync /etc/dns-sync /var/lib/dns-sync /var/log/dns-sync
-sudo chmod 750 /etc/dns-sync /var/lib/dns-sync /var/log/dns-sync
+for dir in "$CONFIG_DIR/secrets" "$DATA_DIR"; do
+    $SUDO mkdir -p "$dir"
+done
 
-# Install systemd units
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-sudo cp "$SCRIPT_DIR/dns-sync.service" /etc/systemd/system/dns-sync.service
-sudo cp "$SCRIPT_DIR/dns-sync.timer"   /etc/systemd/system/dns-sync.timer
+$SUDO chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$DATA_DIR"
+$SUDO chmod 750 "$CONFIG_DIR" "$CONFIG_DIR/secrets" "$DATA_DIR"
+info "Directories ready"
 
-# Reload systemd and enable timer
-sudo systemctl daemon-reload
-sudo systemctl enable --now dns-sync.timer
+# ── Systemd units (embedded so curl|bash works) ────────────────────────────
+step "Installing systemd units"
 
+$SUDO tee "$SERVICE_FILE" > /dev/null << 'EOF'
+[Unit]
+Description=DNS Rewrites Sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dns-sync
+Group=dns-sync
+WorkingDirectory=/var/lib/dns-sync
+ExecStart=/usr/local/bin/dns-sync sync
+StandardOutput=journal
+StandardError=journal
+EOF
+
+$SUDO tee "$TIMER_FILE" > /dev/null << 'EOF'
+[Unit]
+Description=Run DNS Rewrites Sync hourly
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable --now dns-sync.timer
+info "Timer enabled (runs 2 min after boot, then every hour)"
+
+# ── Done ───────────────────────────────────────────────────────────────────
 echo ""
-echo "✅ Installation complete!"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo " ✅  DNS Rewrites Sync installed!"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "Next steps:"
-echo "  1. Initialize master key: sudo -u dns-sync dns-sync init"
-echo "  2. Add your servers:      sudo -u dns-sync dns-sync add-server"
-echo "  3. Check timer status:    systemctl status dns-sync.timer"
-echo "  4. Run sync immediately:  sudo systemctl start dns-sync.service"
-echo "  5. Watch logs:            journalctl -u dns-sync.service -f"
+echo "  1. Init master key:       sudo -u $SERVICE_USER dns-sync init"
+echo "  2. Add a hub server:      sudo -u $SERVICE_USER dns-sync add-server"
+echo "  3. Add spoke server(s):   sudo -u $SERVICE_USER dns-sync add-server"
+echo "  4. Test a dry run:        sudo -u $SERVICE_USER dns-sync sync --dry-run"
+echo "  5. Run sync now:          sudo systemctl start dns-sync.service"
+echo "  6. Watch logs:            journalctl -u dns-sync.service -f"
+echo "  7. Check timer:           systemctl status dns-sync.timer"
 echo ""
-echo "Documentation: https://github.com/dhaevyd/dns-rewrites-sync"

@@ -6,7 +6,7 @@ setup(
     name="dns-rewrites-sync",
     version="1.0.0",
     description="Universal DNS Rewrites Synchronization Tool",
-    author="Your Name",
+    author="dhaevyd",
     packages=find_packages(),
     install_requires=[
         "requests>=2.31.0",
