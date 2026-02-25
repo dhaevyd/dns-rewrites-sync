@@ -1,0 +1,13 @@
+[Unit]
+Description=DNS Rewrites Sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dns-sync
+Group=dns-sync
+WorkingDirectory=/var/lib/dns-sync
+ExecStart=/usr/local/bin/dns-sync sync
+StandardOutput=journal
+StandardError=journal

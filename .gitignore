@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Claude Code
+.claude/
+
+# Runtime / secrets (should never be in the repo)
+/etc/dns-sync/
+*.key
+*.key.salt
+*.enc
+.env
+.env.*
+config.yaml
