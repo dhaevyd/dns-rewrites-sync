@@ -1,0 +1,25 @@
+services:
+  dns-sync:
+    build: .
+    image: ghcr.io/dhaevyd/dns-rewrites-sync:2.0.0
+    pull_policy: never
+    container_name: dns-sync
+    ports:
+      - "5680:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./config:/etc/dns-sync
+      - ./dns-sync-data:/var/lib/dns-sync
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

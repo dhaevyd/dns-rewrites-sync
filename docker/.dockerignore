@@ -1,0 +1,16 @@
+# Secrets and config (mounted at runtime, never baked in)
+.env
+.env.*
+config/
+dns-sync-data/
+
+# Test artifacts
+tests/
+pytest.ini
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Dev docs
+plans.md

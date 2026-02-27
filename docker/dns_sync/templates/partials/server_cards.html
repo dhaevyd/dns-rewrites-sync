@@ -1,0 +1,8 @@
+{# load-bearing: rendered by GET /api/servers for HTMX hub/spokes polls #}
+{% for server in servers %}
+  {% include "partials/server_card.html" %}
+{% else %}
+  <p class="text-gray-500 text-sm col-span-full py-4">
+    No servers configured.
+  </p>
+{% endfor %}

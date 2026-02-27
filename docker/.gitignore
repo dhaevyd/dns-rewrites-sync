@@ -1,0 +1,12 @@
+.env
+!.env.example
+config/
+dns-sync-data/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+plans.md
+pytest.ini
+requirements.lock
+tests/
