@@ -1,0 +1,99 @@
+# =============================================================================
+# dns-sync config.example.yaml
+# =============================================================================
+# Copy this file to config.yaml and edit for your environment.
+#
+# Credential values marked "encrypted:field" are looked up at runtime:
+#   1. Env var:  DNS_SYNC_{SERVER_NAME}_{FIELD}  (hyphens → underscores, uppercased)
+#   2. Encrypted .enc file in ./config/secrets/
+#   3. Plaintext value in this file (not recommended)
+#
+# sync_mode: hub   → source of truth (only one hub supported currently)
+# sync_mode: spoke → syncs from hub on startup, on schedule, and manually
+
+servers:
+
+  # ── Pi-hole ──────────────────────────────────────────────────────────────
+  # Supports Pi-hole v5 and v6. Default port: 80 (v5) or no port (v6).
+  - name: pihole-hub
+    type: pihole
+    sync_mode: hub
+    enabled: true
+    url: http://192.168.1.10:80
+    auth:
+      password: encrypted:password
+
+  - name: pihole-spoke
+    type: pihole
+    sync_mode: spoke
+    enabled: true
+    url: http://192.168.1.11:80
+    auth:
+      password: encrypted:password
+
+  # ── AdGuard Home ─────────────────────────────────────────────────────────
+  # Default port: 3000 (setup), 80 after initial setup.
+  - name: adguard-home
+    type: adguard
+    sync_mode: spoke
+    enabled: true
+    url: http://192.168.1.20:3000
+    auth:
+      username: encrypted:username
+      password: encrypted:password
+
+  # ── Cloudflare ───────────────────────────────────────────────────────────
+  # api_token: scoped token with Zone:DNS:Edit permission
+  # zone_id: found on the zone's Overview page in the Cloudflare dashboard
+  - name: cloudflare
+    type: cloudflare
+    sync_mode: spoke
+    enabled: true
+    url: https://api.cloudflare.com
+    auth:
+      api_token: encrypted:api_token
+      zone_id: encrypted:zone_id
+
+  # ── OPNsense / pfSense ───────────────────────────────────────────────────
+  # Create an API key in OPNsense: System → Access → Users → your user → API keys
+  - name: opnsense
+    type: opnsense
+    sync_mode: spoke
+    enabled: true
+    url: https://192.168.1.1
+    auth:
+      api_key: encrypted:api_key
+      api_secret: encrypted:api_secret
+
+  # ── Technitium DNS ───────────────────────────────────────────────────────
+  # Generate a token in Technitium: Administration → API Tokens
+  # Default port: 5380
+  - name: technitium-home
+    type: technitium
+    sync_mode: spoke
+    enabled: true
+    url: http://192.168.1.30:5380
+    auth:
+      api_token: encrypted:api_token
+
+  # ── Unbound ──────────────────────────────────────────────────────────────
+  # api_key is optional depending on your Unbound HTTP control setup
+  - name: unbound
+    type: unbound
+    sync_mode: spoke
+    enabled: true
+    url: http://192.168.1.40:8953
+    auth:
+      api_key: encrypted:api_key   # omit auth block entirely if no key required
+
+  # ── Generic ──────────────────────────────────────────────────────────────
+  # For custom or future server types. Use whichever auth fields apply.
+  - name: generic-dns
+    type: generic
+    sync_mode: spoke
+    enabled: true
+    url: http://192.168.1.50:8080
+    auth:
+      username: encrypted:username
+      password: encrypted:password
+      api_token: encrypted:api_token
