@@ -1,7 +1,7 @@
 services:
   dns-sync:
+    image: ghcr.io/dhaevyd/dns-rewrites-sync:2.2.5
     build: .
-    image: ghcr.io/dhaevyd/dns-rewrites-sync:2.0.0
     pull_policy: never
     container_name: dns-sync
     ports:

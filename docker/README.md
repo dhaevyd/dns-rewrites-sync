@@ -22,7 +22,7 @@ docker compose up -d
 open http://localhost:5680
 ```
 
-Default login: set via `DNS_SYNC_ADMIN_PASSWORD_HASH` in `.env`.
+Default login: set via `DNS_SYNC_ADMIN_PASSWORD` in `.env`.
 
 ---
 
@@ -72,16 +72,19 @@ servers:
       password: encrypted:password
 ```
 
-**Supported types:** `pihole` · `technitium` · `adguard` · `cloudflare` · `opnsense` · `unbound` · `generic`
+**Supported types:** `pihole` · `technitium` · `adguard` · `cloudflare` · `opnsense` · `unbound`
 
 ### Credentials
 
-Credentials are resolved in this order:
-1. **Environment variable** — `DNS_SYNC_{SERVER_NAME_UPPER}_{FIELD_UPPER}` (hyphens → underscores)
-2. **Encrypted file** — `config/secrets/{server}-{field}.enc` (legacy CLI)
-3. **Plaintext in config.yaml** — not recommended
+Credentials come from environment variables only:
 
-The `encrypted:fieldname` marker in `auth:` tells the app to look up `fieldname` via the credential chain. See `.env.example` for all server credential formats.
+```
+DNS_SYNC_{SERVER_NAME_UPPER}_{FIELD_UPPER}
+```
+
+Hyphens and spaces in server names become underscores. Example: server named `Pihole-main` with field `password` → `DNS_SYNC_PIHOLE_MAIN_PASSWORD`.
+
+The `encrypted:fieldname` marker in `auth:` tells the app which field to look up. See `.env.example` for all server credential formats.
 
 ---
 
@@ -95,7 +98,6 @@ The `encrypted:fieldname` marker in `auth:` tells the app to look up `fieldname`
 | `cloudflare` | `api_token`, `zone_id` | A, CNAME, TXT |
 | `opnsense` | `api_key`, `api_secret` | A |
 | `unbound` | `api_key` (optional) | A, CNAME |
-| `generic` | `username`, `password`, `api_token` (any) | A, CNAME |
 
 ### Technitium Setup
 
@@ -124,9 +126,9 @@ See `.env.example` for the full reference. Key variables:
 
 | Variable | Description |
 |----------|-------------|
-| `DNS_SYNC_SECRET_KEY` | Session signing key — generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
-| `DNS_SYNC_ADMIN_PASSWORD_HASH` | Bcrypt hash of web UI password |
-| `DNS_SYNC_INTERVAL_MINUTES` | Default auto-sync interval (overridden by UI settings) |
+| `DNS_SYNC_SECRET_KEY` | Session signing key — auto-generated and persisted to `dns-sync-data/secret.key` on first run. No need to set manually. |
+| `DNS_SYNC_ADMIN_PASSWORD` | Web UI admin password |
+| `DNS_SYNC_INTERVAL` | Default auto-sync interval — e.g. `30 mins`, `4 hours`, `1 day`. Overridden by UI settings. |
 | `DNS_SYNC_DISCORD_WEBHOOK_URL` | Discord webhook for sync failure notifications |
 
 ---
@@ -135,7 +137,7 @@ See `.env.example` for the full reference. Key variables:
 
 | Host path | Container path | Purpose |
 |-----------|---------------|---------|
-| `./config` | `/etc/dns-sync` | `config.yaml`, `master.key`, `secrets/` |
+| `./config` | `/etc/dns-sync` | `config.yaml` |
 | `./dns-sync-data` | `/var/lib/dns-sync` | `sync.db`, `settings.json` |
 
 ---

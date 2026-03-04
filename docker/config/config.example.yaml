@@ -3,18 +3,61 @@
 # =============================================================================
 # Copy this file to config.yaml and edit for your environment.
 #
-# Credential values marked "encrypted:field" are looked up at runtime:
-#   1. Env var:  DNS_SYNC_{SERVER_NAME}_{FIELD}  (hyphens → underscores, uppercased)
-#   2. Encrypted .enc file in ./config/secrets/
-#   3. Plaintext value in this file (not recommended)
+# Credentials are loaded exclusively from env vars:
+#   DNS_SYNC_{SERVER_NAME}_{FIELD}  (hyphens → underscores, uppercased)
+#   e.g. DNS_SYNC_PIHOLE_MAIN_PASSWORD
+# The "encrypted:field" marker in auth blocks is just a field-name hint — no
+# encryption or master.key required. Set the real value in your .env file.
 #
-# sync_mode: hub   → source of truth (only one hub supported currently)
-# sync_mode: spoke → syncs from hub on startup, on schedule, and manually
+# =============================================================================
+# FORMAT A — Multi-hub (recommended for new setups)
+# =============================================================================
+# Detected automatically when a top-level 'hubs:' key is present.
+# Each spoke references its hub by name via the 'hub:' field.
+#
+# hubs:
+#   - name: pihole-hub
+#     type: pihole
+#     enabled: true
+#     url: http://192.168.1.10
+#     auth:
+#       password: encrypted:password
+#
+#   - name: adguard-hub
+#     type: adguard
+#     enabled: true
+#     url: http://192.168.1.20:3000
+#     auth:
+#       username: encrypted:username
+#       password: encrypted:password
+#
+# servers:
+#   - name: pihole-spoke
+#     type: pihole
+#     hub: pihole-hub          # ← which hub this spoke belongs to
+#     enabled: true
+#     url: http://192.168.1.11
+#     auth:
+#       password: encrypted:password
+#
+#   - name: adguard-spoke
+#     type: adguard
+#     hub: adguard-hub
+#     enabled: true
+#     url: http://192.168.1.21:3000
+#     auth:
+#       username: encrypted:username
+#       password: encrypted:password
+#
+# =============================================================================
+# FORMAT B — Single-hub legacy (backward compatible)
+# =============================================================================
+# Use sync_mode: hub for the source of truth, sync_mode: spoke for the rest.
 
 servers:
 
   # ── Pi-hole ──────────────────────────────────────────────────────────────
-  # Supports Pi-hole v5 and v6. Default port: 80 (v5) or no port (v6).
+  # Requires Pi-hole v6+. Default port: 80.
   - name: pihole-hub
     type: pihole
     sync_mode: hub
@@ -68,6 +111,8 @@ servers:
   # ── Technitium DNS ───────────────────────────────────────────────────────
   # Generate a token in Technitium: Administration → API Tokens
   # Default port: 5380
+  # NOTE: Technitium's API passes the token as a URL query parameter (?token=...).
+  # The token will appear in Technitium's own access logs and any reverse proxy logs.
   - name: technitium-home
     type: technitium
     sync_mode: spoke
@@ -86,14 +131,3 @@ servers:
     auth:
       api_key: encrypted:api_key   # omit auth block entirely if no key required
 
-  # ── Generic ──────────────────────────────────────────────────────────────
-  # For custom or future server types. Use whichever auth fields apply.
-  - name: generic-dns
-    type: generic
-    sync_mode: spoke
-    enabled: true
-    url: http://192.168.1.50:8080
-    auth:
-      username: encrypted:username
-      password: encrypted:password
-      api_token: encrypted:api_token

@@ -9,10 +9,10 @@ from . import db, notifications
 logger = logging.getLogger(__name__)
 
 
-def refresh_hub_cache(db_path: str, hub_cfg: dict, secrets) -> Optional[dict]:
+def _fetch_hub_records(hub_cfg: dict, secrets) -> dict:
     """
-    Fetch records from hub and store in authoritative_records cache.
-    Returns the records dict on success, None on failure (falls back to cached).
+    HTTP-only fetch from hub — no DB writes. Raises on any error.
+    Used by the parallel multi-hub path (lifespan + background loop).
     """
     from .servers import create_server
     hub_name = hub_cfg["name"]
@@ -20,7 +20,21 @@ def refresh_hub_cache(db_path: str, hub_cfg: dict, secrets) -> Optional[dict]:
     try:
         hub_server = create_server(hub_cfg["type"], hub_name, hub_cfg, secrets)
         hub_server.connect()
-        hub_records = hub_server.get_records()
+        return hub_server.get_records()
+    finally:
+        if hub_server:
+            hub_server.disconnect()
+
+
+def refresh_hub_cache(db_path: str, hub_cfg: dict, secrets) -> Optional[dict]:
+    """
+    Fetch records from hub, save to authoritative_records cache, return records.
+    Falls back to cached records on failure.
+    Used by perform_sync (single-spoke, always-fresh path).
+    """
+    hub_name = hub_cfg["name"]
+    try:
+        hub_records = _fetch_hub_records(hub_cfg, secrets)
         db.save_hub_records(db_path, hub_name, hub_records)
         logger.info("Hub cache refreshed for %s (%d record types)", hub_name, len(hub_records))
         return hub_records
@@ -32,9 +46,6 @@ def refresh_hub_cache(db_path: str, hub_cfg: dict, secrets) -> Optional[dict]:
         if cached:
             logger.warning("Using cached records for hub %s", hub_name)
         return cached
-    finally:
-        if hub_server:
-            hub_server.disconnect()
 
 
 def sync_all_enabled_spokes(db_path: str, hub_cfg: dict, spokes: list, secrets) -> dict:
@@ -56,7 +67,7 @@ def sync_all_enabled_spokes(db_path: str, hub_cfg: dict, spokes: list, secrets) 
 
         if hub_records is None:
             msg = "No authoritative cache available — skipping spoke sync"
-            db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", empty, error=msg)
+            db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", empty, error=msg, hub_name=hub_name)
             results[spoke_name] = empty
             continue
 
@@ -67,12 +78,12 @@ def sync_all_enabled_spokes(db_path: str, hub_cfg: dict, spokes: list, secrets) 
             spoke_server.connect()
             stats = _apply_diff(hub_records, spoke_server)
             db.save_spoke_records(db_path, spoke_name, hub_records)
-            db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", stats)
+            db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", stats, hub_name=hub_name)
             results[spoke_name] = stats
         except Exception as e:
             err = str(e)
             logger.error("Sync failed for %s: %s", spoke_name, err)
-            db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", empty, error=err)
+            db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", empty, error=err, hub_name=hub_name)
             notifications.notify_sync_failed(spoke_name, spoke_cfg["type"], err)
             results[spoke_name] = empty
         finally:
@@ -98,7 +109,7 @@ def perform_sync(db_path: str, hub_cfg: dict, spoke_cfg: dict, secrets) -> dict:
     hub_records = refresh_hub_cache(db_path, hub_cfg, secrets)
     if hub_records is None:
         msg = "Hub unreachable and no cached records"
-        db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", empty, error=msg)
+        db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", empty, error=msg, hub_name=hub_name)
         return empty
 
     spoke_server = None
@@ -108,12 +119,12 @@ def perform_sync(db_path: str, hub_cfg: dict, spoke_cfg: dict, secrets) -> dict:
         spoke_server.connect()
         stats = _apply_diff(hub_records, spoke_server)
         db.save_spoke_records(db_path, spoke_name, hub_records)
-        db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", stats)
+        db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", stats, hub_name=hub_name)
         return stats
     except Exception as e:
         err = str(e)
         logger.error("Sync failed for %s: %s", spoke_name, err)
-        db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", empty, error=err)
+        db.record_sync(db_path, spoke_name, spoke_cfg["type"], "spoke", empty, error=err, hub_name=hub_name)
         notifications.notify_sync_failed(spoke_name, spoke_cfg["type"], err)
         return empty
     finally:

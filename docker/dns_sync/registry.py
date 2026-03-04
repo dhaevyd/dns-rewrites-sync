@@ -75,20 +75,6 @@ SERVER_TYPES = {
         "module": "dns_sync.servers.technitium",
         "doc_url": "https://technitium.com/dns/",
         "default_port": 5380
-    },
-    "generic": {
-        "name": "Generic DNS API",
-        "description": "Custom DNS server with configurable API",
-        "auth_fields": [
-            {"name": "username", "type": "string", "prompt": "Username", "optional": True},
-            {"name": "password", "type": "password", "prompt": "Password", "optional": True},
-            {"name": "api_token", "type": "password", "prompt": "API Token", "optional": True}
-        ],
-        "supports": ["A", "CNAME"],
-        "class": "GenericServer",
-        "module": "dns_sync.servers.generic",
-        "doc_url": None,
-        "default_port": 80
     }
 }
 

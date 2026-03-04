@@ -32,12 +32,14 @@ def init_db(db_path: str):
             cname_records INTEGER DEFAULT 0
         )
     """)
-    # Migrate existing DB: add per-type record count columns if missing
+    # Migrate existing DB: add missing columns
     cols = {r[1] for r in con.execute("PRAGMA table_info(sync_runs)").fetchall()}
     if "a_records" not in cols:
         con.execute("ALTER TABLE sync_runs ADD COLUMN a_records INTEGER DEFAULT 0")
     if "cname_records" not in cols:
         con.execute("ALTER TABLE sync_runs ADD COLUMN cname_records INTEGER DEFAULT 0")
+    if "hub_name" not in cols:
+        con.execute("ALTER TABLE sync_runs ADD COLUMN hub_name TEXT")
     con.execute("""
         CREATE TABLE IF NOT EXISTS authoritative_records (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -190,6 +192,7 @@ def record_sync(
     role: str,
     stats: dict,
     error: Optional[str] = None,
+    hub_name: Optional[str] = None,
 ):
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -199,43 +202,58 @@ def record_sync(
         """
         INSERT INTO sync_runs
             (server_name, server_type, role, started_at, finished_at,
-             added, removed, conflicts, error, status, a_records, cname_records)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             added, removed, conflicts, error, status, a_records, cname_records, hub_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             server_name, server_type, role, now, now,
             stats.get("added", 0), stats.get("removed", 0),
             stats.get("conflicts", 0), error, status,
             stats.get("a_records", 0), stats.get("cname_records", 0),
+            hub_name,
         ),
     )
     con.commit()
     con.close()
 
 
-def get_history(db_path: str, limit: int = 50, server_name: str = None) -> list:
+def get_history(
+    db_path: str,
+    limit: int = 50,
+    server_name: str = None,
+    hub_name: str = None,
+) -> list:
     con = _connect(db_path)
     con.row_factory = sqlite3.Row
+    conditions, params = [], []
     if server_name:
-        rows = con.execute(
-            "SELECT * FROM sync_runs WHERE server_name = ? ORDER BY started_at DESC LIMIT ?",
-            (server_name, limit),
-        ).fetchall()
-    else:
-        rows = con.execute(
-            "SELECT * FROM sync_runs ORDER BY started_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        conditions.append("server_name = ?")
+        params.append(server_name)
+    if hub_name:
+        conditions.append("hub_name = ?")
+        params.append(hub_name)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    params.append(limit)
+    rows = con.execute(
+        f"SELECT * FROM sync_runs {where} ORDER BY started_at DESC LIMIT ?",
+        params,
+    ).fetchall()
     con.close()
     return [dict(r) for r in rows]
 
 
-def clear_history(db_path: str, server_name: str = None):
-    """Delete sync_runs rows, optionally filtered to one server."""
+def clear_history(db_path: str, server_name: str = None, hub_name: str = None):
+    """Delete sync_runs rows, optionally filtered by server and/or hub."""
     con = _connect(db_path)
+    conditions, params = [], []
     if server_name:
-        con.execute("DELETE FROM sync_runs WHERE server_name = ?", (server_name,))
-    else:
-        con.execute("DELETE FROM sync_runs")
+        conditions.append("server_name = ?")
+        params.append(server_name)
+    if hub_name:
+        conditions.append("hub_name = ?")
+        params.append(hub_name)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    con.execute(f"DELETE FROM sync_runs {where}", params)
     con.commit()
     con.close()
 

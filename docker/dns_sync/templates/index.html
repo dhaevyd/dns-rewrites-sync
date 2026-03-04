@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% block title %}{% if summary is defined and summary.errors > 0 %}({{ summary.errors }} error{{ 's' if summary.errors != 1 }}) dns-sync{% else %}dns-sync{% endif %}{% endblock %}
+
 {% block content %}
 
 <!-- Status banner -->
@@ -8,7 +10,7 @@
   {% if summary.errors > 0 %}
     bg-red-900/40 border border-red-700 text-red-200
   {% elif summary.never > 0 and summary.ok == 0 %}
-    bg-gray-700/50 border border-gray-600 text-gray-300
+    bg-slate-700/50 border border-slate-600 text-slate-300
   {% elif summary.never > 0 %}
     bg-yellow-900/30 border border-yellow-700 text-yellow-200
   {% else %}
@@ -50,10 +52,10 @@
 <!-- Hub section -->
 <section class="mb-8">
   <h2 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-    <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+    <svg class="w-4 h-4 text-{{ accent }}-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
       <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3.6 9h16.8M3.6 15h16.8M12 3a13.5 13.5 0 0 1 0 18M12 3a13.5 13.5 0 0 0 0 18"/>
     </svg>
-    Hub
+    {{ "Hubs" if hub | length > 1 else "Hub" }}
   </h2>
   <div id="hub"
        class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
@@ -63,7 +65,7 @@
     {% for server in hub %}
       {% include "partials/server_card.html" %}
     {% else %}
-      <p class="text-gray-500 text-sm col-span-full py-4">
+      <p class="text-slate-500 text-sm col-span-full py-4">
         No hub configured. Configure servers in config.yaml.
       </p>
     {% endfor %}
@@ -74,7 +76,7 @@
 <section class="mb-8">
   <div class="flex items-center justify-between mb-4">
     <h2 class="text-lg font-semibold text-white flex items-center gap-2">
-      <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+      <svg class="w-4 h-4 text-{{ accent }}-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
         <circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/>
       </svg>
       Spokes
@@ -83,11 +85,11 @@
     <!-- Sync All button -->
     <button
       hx-post="/api/sync-all"
-      hx-target="#spokes"
+      hx-target="#spokes-container"
       hx-swap="innerHTML"
-      class="flex items-center gap-2 bg-purple-700 hover:bg-purple-600 active:bg-purple-800
+      class="flex items-center gap-2 bg-{{ accent }}-700 hover:bg-{{ accent }}-600 active:bg-{{ accent }}-800
              text-white text-xs font-medium rounded-md px-3 py-1.5 transition-colors
-             focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2
+             focus:outline-none focus:ring-2 focus:ring-{{ accent }}-500 focus:ring-offset-2
              focus:ring-offset-gray-900">
       <span class="htmx-indicator" role="status" aria-label="Syncing all...">
         <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -99,25 +101,18 @@
     </button>
   </div>
 
-  <div id="spokes"
-       class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
-       hx-get="/api/servers?role=spoke"
+  <div id="spokes-container"
+       hx-get="/api/servers/spokes"
        hx-trigger="every 30s"
        hx-swap="innerHTML">
-    {% for server in spokes %}
-      {% include "partials/server_card.html" %}
-    {% else %}
-      <p class="text-gray-500 text-sm col-span-full py-4">
-        No spokes configured. Configure servers in config.yaml.
-      </p>
-    {% endfor %}
+    {% include "partials/hub_spoke_groups.html" %}
   </div>
 </section>
 
 <!-- Settings -->
 <section class="mb-8">
   <h2 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+    <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
       <path stroke-linecap="round" stroke-linejoin="round"
         d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/>
       <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
@@ -139,6 +134,8 @@
        hx-get="/api/history"
        hx-trigger="every 30s"
        hx-swap="innerHTML">
+    {# history partial needs: history, hubs, spokes, selected_server, selected_hub #}
+    {% set selected_hub = "" %}
     {% include "partials/history.html" %}
   </div>
 </section>

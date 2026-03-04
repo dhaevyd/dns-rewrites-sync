@@ -1,9 +1,10 @@
-<div id="settings-panel" class="bg-gray-800 rounded-lg border border-gray-700 shadow p-4">
+{% if theme == 'midnight' %}{% set bg_card = "bg-[#0f172a]" %}{% set border = "border-white/5" %}{% set accent = "green" %}{% set btn_hover = "hover:bg-[#1a2744]" %}{% elif theme == 'dusk' %}{% set bg_card = "bg-[#1e1b4b]" %}{% set border = "border-indigo-900/50" %}{% set accent = "orange" %}{% set btn_hover = "hover:bg-[#2d2a5e]" %}{% else %}{% set bg_card = "bg-slate-800" %}{% set border = "border-slate-700" %}{% set accent = "sky" %}{% set btn_hover = "hover:bg-slate-700" %}{% endif %}
+<div id="settings-panel" class="{{ bg_card }} rounded-lg border {{ border }} shadow p-4">
   <div class="flex items-center gap-4 flex-wrap">
 
     <!-- Label -->
     <span class="text-sm font-semibold text-white flex items-center gap-1.5 flex-shrink-0">
-      <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+      <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round"
           d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/>
         <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
@@ -15,20 +16,20 @@
     {% if enabled %}
     <span class="flex items-center gap-1.5 text-xs text-green-400 flex-shrink-0">
       <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-      Every {{ interval_minutes }}m
+      Every {{ interval_label }}
     </span>
     {% else %}
-    <span class="flex items-center gap-1.5 text-xs text-gray-500 flex-shrink-0">
-      <span class="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
+    <span class="flex items-center gap-1.5 text-xs text-slate-500 flex-shrink-0">
+      <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
       Disabled
     </span>
     {% endif %}
 
     {% if next_sync_at %}
-    <span class="text-xs text-gray-400 flex-shrink-0">
+    <span class="text-xs text-slate-400 flex-shrink-0">
       Next: <span data-ts="{{ next_sync_at }}"
                   title="{{ next_sync_at[:19] | replace('T', ' ') }} UTC"
-                  class="text-gray-300"></span>
+                  class="text-slate-300"></span>
     </span>
     {% endif %}
 
@@ -37,20 +38,28 @@
 
     <!-- Inline form -->
     <form hx-post="/api/settings" hx-target="#settings-panel" hx-swap="outerHTML"
+          hx-indicator="#settings-save-indicator"
           class="flex items-center gap-2">
       <input
         type="number"
-        name="interval_minutes"
-        value="{{ interval_minutes }}"
-        min="1" max="1440"
-        class="w-20 bg-gray-700 border border-gray-600 rounded-md px-2 py-1 text-xs text-white
-               focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-      <span class="text-xs text-gray-500">min</span>
+        name="interval_value"
+        value="{{ interval_value }}"
+        min="1" max="999"
+        class="w-16 {{ bg_card }} border {{ border }} rounded-md px-2 py-1 text-xs text-white
+               focus:outline-none focus:ring-2 focus:ring-{{ accent }}-500 focus:border-transparent">
+      <select
+        name="unit"
+        class="{{ bg_card }} border {{ border }} rounded-md px-2 py-1 text-xs text-white
+               focus:outline-none focus:ring-2 focus:ring-{{ accent }}-500 focus:border-transparent">
+        <option value="minutes" {% if interval_unit == "minutes" %}selected{% endif %}>min</option>
+        <option value="hours"   {% if interval_unit == "hours"   %}selected{% endif %}>hr</option>
+        <option value="days"    {% if interval_unit == "days"    %}selected{% endif %}>days</option>
+      </select>
 
       {% if enabled %}
       <button type="button"
         hx-post="/api/settings/disable" hx-target="#settings-panel" hx-swap="outerHTML"
-        class="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium
+        class="{{ bg_card }} {{ btn_hover }} text-slate-300 text-xs font-medium
                rounded-md px-2.5 py-1 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500">
         Pause
       </button>
@@ -64,8 +73,14 @@
       {% endif %}
 
       <button type="submit"
-        class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium
-               rounded-md px-2.5 py-1 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500">
+        class="flex items-center gap-1.5 bg-{{ accent }}-600 hover:bg-{{ accent }}-500 text-white text-xs font-medium
+               rounded-md px-2.5 py-1 transition-colors focus:outline-none focus:ring-2 focus:ring-{{ accent }}-500">
+        <svg id="settings-save-indicator"
+             class="htmx-indicator w-3 h-3 animate-spin"
+             fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+        </svg>
         Save
       </button>
     </form>

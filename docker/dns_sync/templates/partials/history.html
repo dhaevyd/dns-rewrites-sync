@@ -1,14 +1,36 @@
+{% if theme == 'midnight' %}{% set bg_card = "bg-[#0f172a]" %}{% set border = "border-white/5" %}{% set accent = "green" %}{% set btn_hover = "hover:bg-[#1a2744]" %}{% elif theme == 'dusk' %}{% set bg_card = "bg-[#1e1b4b]" %}{% set border = "border-indigo-900/50" %}{% set accent = "orange" %}{% set btn_hover = "hover:bg-[#2d2a5e]" %}{% else %}{% set bg_card = "bg-slate-800" %}{% set border = "border-slate-700" %}{% set accent = "sky" %}{% set btn_hover = "hover:bg-slate-700" %}{% endif %}
 <!-- Filter controls + table — full partial returned by /api/history -->
-<div class="flex items-center justify-between mb-3 gap-3">
-  <!-- Spoke filter dropdown -->
+<div class="flex items-center flex-wrap gap-2 mb-3">
+
+  {% if hubs | length > 1 %}
+  <!-- Hub filter (only shown with multiple hubs) -->
+  <select name="hub"
+          hx-get="/api/history"
+          hx-target="#history"
+          hx-swap="innerHTML"
+          hx-trigger="change"
+          hx-include="this, select[name='server']"
+          class="{{ bg_card }} border {{ border }} text-slate-200 text-xs rounded-md px-3 py-1.5
+                 focus:outline-none focus:ring-2 focus:ring-{{ accent }}-500 focus:border-transparent
+                 transition-colors min-w-0">
+    <option value="" {% if not selected_hub %}selected{% endif %}>All hubs</option>
+    {% for h in hubs %}
+    <option value="{{ h.name }}" {% if selected_hub == h.name %}selected{% endif %}>
+      {{ h.name }}
+    </option>
+    {% endfor %}
+  </select>
+  {% endif %}
+
+  <!-- Spoke filter -->
   <select name="server"
           hx-get="/api/history"
           hx-target="#history"
           hx-swap="innerHTML"
           hx-trigger="change"
-          hx-include="this"
-          class="bg-gray-700 border border-gray-600 text-gray-200 text-xs rounded-md px-3 py-1.5
-                 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+          hx-include="this, select[name='hub']"
+          class="{{ bg_card }} border {{ border }} text-slate-200 text-xs rounded-md px-3 py-1.5
+                 focus:outline-none focus:ring-2 focus:ring-{{ accent }}-500 focus:border-transparent
                  transition-colors min-w-0">
     <option value="" {% if not selected_server %}selected{% endif %}>All spokes</option>
     {% for spoke in spokes %}
@@ -23,8 +45,8 @@
     hx-delete="/api/history"
     hx-target="#history"
     hx-swap="innerHTML"
-    hx-include="select[name='server']"
-    hx-confirm="Clear sync history?"
+    hx-include="select[name='server'], select[name='hub']"
+    hx-confirm="{% if selected_server %}Clear history for {{ selected_server }}? This cannot be undone.{% else %}Clear ALL sync history? This cannot be undone.{% endif %}"
     class="flex-shrink-0 flex items-center gap-1.5 border border-red-700 text-red-400
            hover:bg-red-900/30 hover:text-red-300 text-xs font-medium rounded-md px-3 py-1.5
            transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2
@@ -40,12 +62,13 @@
 <!-- Table content — targeted by dropdown change and clear button -->
 <div id="history-content">
   {% if history %}
-  <div class="overflow-x-auto rounded-lg border border-gray-700">
+  <div class="overflow-x-auto rounded-lg border {{ border }}">
     <table class="w-full text-sm">
       <thead>
-        <tr class="bg-gray-700/50 text-gray-400 text-xs uppercase tracking-wider">
+        <tr class="{{ bg_card }} text-slate-400 text-xs uppercase tracking-wider border-b {{ border }}">
           <th class="px-4 py-3 text-left font-medium">Result</th>
           <th class="px-4 py-3 text-left font-medium">Server</th>
+          {% if hubs | length > 1 %}<th class="px-4 py-3 text-left font-medium">Hub</th>{% endif %}
           <th class="px-4 py-3 text-left font-medium">Type</th>
           <th class="px-4 py-3 text-left font-medium">Time</th>
           <th class="px-4 py-3 text-right font-medium">+Added</th>
@@ -53,9 +76,9 @@
           <th class="px-4 py-3 text-right font-medium">Conflicts</th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-gray-700">
+      <tbody class="divide-y {{ border }}">
         {% for run in history %}
-        <tr class="hover:bg-gray-700/30 transition-colors {% if loop.index is odd %}bg-gray-800{% else %}bg-gray-800/60{% endif %}">
+        <tr class="{{ btn_hover }} transition-colors {{ bg_card }}">
 
           <!-- Result badge -->
           <td class="px-4 py-3">
@@ -79,7 +102,7 @@
                   </svg>
                   error
                 </summary>
-                <p class="mt-1.5 text-gray-400 text-xs leading-relaxed break-words max-w-xs">
+                <p class="mt-1.5 text-slate-400 text-xs leading-relaxed break-words max-w-xs">
                   {{ run.error }}
                 </p>
               </details>
@@ -98,28 +121,33 @@
           <!-- Server name -->
           <td class="px-4 py-3 font-medium text-white">{{ run.server_name }}</td>
 
+          <!-- Hub (conditional) -->
+          {% if hubs | length > 1 %}
+          <td class="px-4 py-3 text-slate-400 text-xs">{{ run.hub_name or '—' }}</td>
+          {% endif %}
+
           <!-- Type badge -->
           <td class="px-4 py-3">
-            <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-blue-900/40 text-blue-300 uppercase tracking-wide">
+            <span class="px-1.5 py-0.5 rounded text-xs font-medium bg-{{ accent }}-900/40 text-{{ accent }}-300 uppercase tracking-wide">
               {{ run.server_type }}
             </span>
           </td>
 
           <!-- Timestamp: relative + absolute tooltip -->
-          <td class="px-4 py-3 text-gray-400">
+          <td class="px-4 py-3 text-slate-400">
             <span data-ts="{{ run.started_at }}"
                   title="{{ run.started_at[:19] | replace('T', ' ') }} UTC"
-                  class="text-gray-400"></span>
+                  class="text-slate-400"></span>
           </td>
 
           <!-- Stats -->
-          <td class="px-4 py-3 text-right {% if run.added > 0 %}text-green-400 font-medium{% else %}text-gray-500{% endif %}">
+          <td class="px-4 py-3 text-right {% if run.added > 0 %}text-green-400 font-medium{% else %}text-slate-500{% endif %}">
             {{ run.added }}
           </td>
-          <td class="px-4 py-3 text-right {% if run.removed > 0 %}text-red-400 font-medium{% else %}text-gray-500{% endif %}">
+          <td class="px-4 py-3 text-right {% if run.removed > 0 %}text-red-400 font-medium{% else %}text-slate-500{% endif %}">
             {{ run.removed }}
           </td>
-          <td class="px-4 py-3 text-right {% if run.conflicts > 0 %}text-yellow-400 font-medium{% else %}text-gray-500{% endif %}">
+          <td class="px-4 py-3 text-right {% if run.conflicts > 0 %}text-yellow-400 font-medium{% else %}text-slate-500{% endif %}">
             {{ run.conflicts }}
           </td>
         </tr>
@@ -128,6 +156,6 @@
     </table>
   </div>
   {% else %}
-    <p class="text-gray-500 text-sm py-4">No sync runs yet.</p>
+    <p class="text-slate-500 text-sm py-4">No sync runs yet.</p>
   {% endif %}
 </div>

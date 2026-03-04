@@ -1,0 +1,25 @@
+{% if theme == 'midnight' %}{% set bg_card = "bg-[#0f172a]" %}{% set border = "border-white/5" %}{% set accent = "green" %}{% set btn_hover = "hover:bg-[#1a2744]" %}{% elif theme == 'dusk' %}{% set bg_card = "bg-[#1e1b4b]" %}{% set border = "border-indigo-900/50" %}{% set accent = "orange" %}{% set btn_hover = "hover:bg-[#2d2a5e]" %}{% else %}{% set bg_card = "bg-slate-800" %}{% set border = "border-slate-700" %}{% set accent = "sky" %}{% set btn_hover = "hover:bg-slate-700" %}{% endif %}
+{# Grouped spoke cards by hub. hubs = [{name, type, spokes: [...]}, ...] #}
+{% for hub in hubs %}
+<div class="{% if not loop.last %}mb-6{% endif %}">
+
+  {# Hub-name header — only shown when multiple hubs are configured #}
+  {% if hubs | length > 1 %}
+  <p class="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+    <span class="w-1.5 h-1.5 rounded-full bg-{{ accent }}-500 flex-shrink-0"></span>
+    {{ hub.name }}
+  </p>
+  {% endif %}
+
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+    {% for server in hub.spokes %}
+      {% include "partials/server_card.html" %}
+    {% else %}
+      <p class="text-slate-500 text-sm col-span-full py-2">No spokes for this hub.</p>
+    {% endfor %}
+  </div>
+
+</div>
+{% else %}
+<p class="text-slate-500 text-sm col-span-full py-4">No spokes configured. Configure servers in config.yaml.</p>
+{% endfor %}

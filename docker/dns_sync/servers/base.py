@@ -47,28 +47,20 @@ class DNSServer(ABC):
         self._load_credentials()
     
     def _load_credentials(self):
-        """Load credentials from secrets manager.
+        """Load credentials from env vars only.
 
-        Priority per field:
-          1. Env var  DNS_SYNC_{SERVER}_{FIELD}
-          2. Encrypted .enc file (legacy: value starts with 'encrypted:')
-          3. Plaintext value in config.yaml auth section
+        All auth fields are resolved via DNS_SYNC_{SERVER}_{FIELD} env vars.
+        The 'encrypted:field' marker in config.yaml indicates which field name
+        to look up — the value always comes from the env var, never config.yaml.
         """
         self.credentials = {}
         auth_config = self.config.get('auth', {}) or {}
 
         for field in auth_config:
             value = auth_config[field]
-            if isinstance(value, str) and value.startswith('encrypted:'):
-                # Legacy CLI path: value is a reference, field name is embedded
-                clean_field = value.replace('encrypted:', '')
-                cred_value = self.secrets.get_credential(self.name, clean_field)
-                if cred_value:
-                    self.credentials[clean_field] = cred_value
-            else:
-                # Docker-native path: check env var / .enc first, fall back to config value
-                cred_value = self.secrets.get_credential(self.name, field)
-                self.credentials[field] = cred_value if cred_value else value
+            # 'encrypted:field' is a marker — strip it to get the real field name
+            clean_field = value.replace('encrypted:', '') if isinstance(value, str) and value.startswith('encrypted:') else field
+            self.credentials[clean_field] = self.secrets.get_credential(self.name, clean_field)
     
     def _request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
         """Make request with retry logic"""

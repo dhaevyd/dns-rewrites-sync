@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -28,7 +28,27 @@ limiter = Limiter(key_func=get_remote_address)
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-_SETTINGS_DEFAULTS = {"interval_minutes": 30, "enabled": True}
+_SETTINGS_DEFAULTS = {"interval_minutes": 30, "enabled": True, "theme": "storm"}
+
+_UNIT_MULTIPLIERS = {"minutes": 1, "minute": 1, "mins": 1, "min": 1,
+                     "hours": 60, "hour": 60, "hrs": 60, "hr": 60,
+                     "days": 1440, "day": 1440}
+
+def _parse_interval(value: str) -> int:
+    """Parse '3 mins', '4 hours', '2 days', or plain int string → minutes."""
+    value = value.strip()
+    parts = value.split()
+    if len(parts) == 2:
+        try:
+            num = int(parts[0])
+            multiplier = _UNIT_MULTIPLIERS.get(parts[1].lower(), 1)
+            return max(1, num * multiplier)
+        except ValueError:
+            pass
+    try:
+        return max(1, int(value))
+    except ValueError:
+        return 30
 
 
 def _settings_path(db_path: str) -> str:
@@ -43,8 +63,8 @@ def _load_settings(db_path: str) -> dict:
         # Merge with defaults so new keys always have values
         return {**_SETTINGS_DEFAULTS, **data}
     except FileNotFoundError:
-        interval = int(os.environ.get("DNS_SYNC_INTERVAL_MINUTES", 30))
-        return {**_SETTINGS_DEFAULTS, "interval_minutes": interval}
+        raw = os.environ.get("DNS_SYNC_INTERVAL", "30 mins")
+        return {**_SETTINGS_DEFAULTS, "interval_minutes": _parse_interval(str(raw))}
     except Exception:
         return dict(_SETTINGS_DEFAULTS)
 
@@ -56,18 +76,63 @@ def _save_settings(db_path: str, settings: dict):
         json.dump(settings, f, indent=2)
     os.replace(tmp, path)
 
-# Fail fast at startup if the session secret key is missing.
-_SECRET_KEY = os.environ.get("DNS_SYNC_SECRET_KEY")
-if not _SECRET_KEY:
-    raise RuntimeError(
-        "DNS_SYNC_SECRET_KEY is not set.\n"
-        "Generate one with:  python3 -c \"import secrets; print(secrets.token_hex(32))\"\n"
-        "Then add it to your .env file."
+def _load_or_create_secret_key(data_dir: str) -> str:
+    """Load persisted secret key from data volume, or generate and save one on first run."""
+    import secrets as _secrets
+    key_path = os.path.join(data_dir, "secret.key")
+    env_key = os.environ.get("DNS_SYNC_SECRET_KEY")
+    if env_key:
+        return env_key
+    if os.path.exists(key_path):
+        with open(key_path) as f:
+            return f.read().strip()
+    key = _secrets.token_hex(32)
+    os.makedirs(data_dir, exist_ok=True)
+    with open(key_path, "w") as f:
+        f.write(key)
+    os.chmod(key_path, 0o600)
+    logger.info("Generated new secret key → %s", key_path)
+    return key
+
+
+async def _run_hub_sync_cycle(db_path: str, hub_cfgs: list, cfg, secrets):
+    """Parallel hub fetch → sequential DB commit → sequential per-hub spoke sync."""
+    loop = asyncio.get_running_loop()
+
+    # Fetch all hubs in parallel (HTTP only, no DB writes)
+    fetch_results = await asyncio.gather(
+        *[loop.run_in_executor(None, sync_engine._fetch_hub_records, hub_cfg, secrets)
+          for hub_cfg in hub_cfgs],
+        return_exceptions=True,
     )
+
+    # Commit to DB sequentially — avoids SQLite write contention
+    for hub_cfg, result in zip(hub_cfgs, fetch_results):
+        hub_name = hub_cfg["name"]
+        if isinstance(result, Exception):
+            logger.error("Hub fetch failed (%s): %s", hub_name, result)
+            notifications.notify_hub_unreachable(hub_name, hub_cfg["type"], str(result))
+            if db.get_cached_hub_records(db_path, hub_name):
+                logger.warning("Using stale cache for hub %s", hub_name)
+        else:
+            db.save_hub_records(db_path, hub_name, result)
+            logger.info("Hub cache refreshed for %s (%d record types)", hub_name, len(result))
+
+    # Sync each hub's spokes sequentially against its cache
+    for hub_cfg in hub_cfgs:
+        hub_name = hub_cfg["name"]
+        hub_records = db.get_cached_hub_records(db_path, hub_name)
+        if hub_records is None:
+            logger.warning("Spoke sync skipped for hub %s: no cache available", hub_name)
+            continue
+        spokes = cfg.list_spokes_for_hub(hub_name)
+        await loop.run_in_executor(
+            None, sync_engine.sync_all_enabled_spokes, db_path, hub_cfg, spokes, secrets
+        )
 
 
 async def _background_sync_loop(app: FastAPI):
-    """Periodically refresh hub cache and sync all enabled spokes."""
+    """Periodically refresh hub caches and sync all enabled spokes."""
     while True:
         settings = _load_settings(app.state.db_path)
         interval = max(1, settings.get("interval_minutes", 30))
@@ -89,26 +154,14 @@ async def _background_sync_loop(app: FastAPI):
         cfg = app.state.config
         secrets = app.state.secrets
         db_path = app.state.db_path
-        servers = cfg.list_servers()
-        hub_cfgs = [s for s in servers if s.get("sync_mode") == "hub"]
-        spoke_cfgs = [s for s in servers if s.get("sync_mode") != "hub"]
+        hub_cfgs = cfg.list_hubs()
 
         if not hub_cfgs:
             logger.info("Background sync skipped: no hub configured")
             continue
 
-        loop = asyncio.get_running_loop()
-        hub_cfg = hub_cfgs[0]
-        logger.info("Background sync: refreshing hub %s", hub_cfg["name"])
-        hub_records = await loop.run_in_executor(
-            None, sync_engine.refresh_hub_cache, db_path, hub_cfg, secrets
-        )
-        if hub_records is not None:
-            await loop.run_in_executor(
-                None, sync_engine.sync_all_enabled_spokes, db_path, hub_cfg, spoke_cfgs, secrets
-            )
-        else:
-            logger.warning("Background sync: hub unreachable and no cache, skipping spoke sync")
+        logger.info("Background sync: %d hub(s)", len(hub_cfgs))
+        await _run_hub_sync_cycle(db_path, hub_cfgs, cfg, secrets)
 
 
 @asynccontextmanager
@@ -116,37 +169,24 @@ async def lifespan(app: FastAPI):
     config_dir = os.environ.get("DNS_SYNC_CONFIG_DIR", "/etc/dns-sync")
     db_path = os.environ.get("DNS_SYNC_DB_PATH", "/var/lib/dns-sync/sync.db")
 
-    admin_hash = os.environ.get("DNS_SYNC_ADMIN_PASSWORD_HASH")
-    if not admin_hash:
+    admin_password = os.environ.get("DNS_SYNC_ADMIN_PASSWORD")
+    if not admin_password:
         raise RuntimeError(
-            "DNS_SYNC_ADMIN_PASSWORD_HASH is not set.\n"
-            "Generate one with:  "
-            "python3 -c \"import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())\"\n"
-            "Then add it to your .env file."
+            "DNS_SYNC_ADMIN_PASSWORD is not set. Add it to your .env file."
         )
+    import bcrypt as _bcrypt
+    admin_hash = _bcrypt.hashpw(admin_password.encode(), _bcrypt.gensalt()).decode()
+    del admin_password
 
     config = ConfigManager(config_dir)
     secrets = SecretsManager(config_dir)
 
-    if not secrets.load_master_key():
-        raise RuntimeError(
-            f"Failed to load master key from {config_dir}/master.key — "
-            "ensure the file exists and DNS_SYNC_CONFIG_DIR is set correctly."
-        )
-
     db.init_db(db_path)
 
-    # Startup: refresh hub cache and sync all enabled spokes
-    servers = config.list_servers()
-    hub_cfgs = [s for s in servers if s.get("sync_mode") == "hub"]
-    spoke_cfgs = [s for s in servers if s.get("sync_mode") != "hub"]
+    # Startup: refresh all hub caches and sync spokes
+    hub_cfgs = config.list_hubs()
     if hub_cfgs:
-        hub_cfg = hub_cfgs[0]
-        hub_records = sync_engine.refresh_hub_cache(db_path, hub_cfg, secrets)
-        if hub_records is not None:
-            sync_engine.sync_all_enabled_spokes(db_path, hub_cfg, spoke_cfgs, secrets)
-        else:
-            logger.warning("Startup sync skipped: hub unreachable and no cache")
+        await _run_hub_sync_cycle(db_path, hub_cfgs, config, secrets)
     else:
         logger.warning("Startup sync skipped: no hub configured")
 
@@ -172,6 +212,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="dns-sync", version="0.1.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+_data_dir = os.path.dirname(os.environ.get("DNS_SYNC_DB_PATH", "/var/lib/dns-sync/sync.db"))
+_SECRET_KEY = _load_or_create_secret_key(_data_dir)
 app.add_middleware(SessionMiddleware, secret_key=_SECRET_KEY)
 
 
@@ -180,20 +222,50 @@ app.add_middleware(SessionMiddleware, secret_key=_SECRET_KEY)
 # ---------------------------------------------------------------------------
 
 def _split_servers(request: Request):
-    """Return (hub_list, spoke_list) with last_sync (and cache_last_updated for hubs) attached."""
+    """Return (hub_list, spoke_list) with DB-derived fields attached. Works for both config formats."""
+    cfg = request.app.state.config
     db_path = request.app.state.db_path
-    hub, spokes = [], []
-    for s in request.app.state.config.list_servers():
+    hub_names = set()
+    hub = []
+    for h in cfg.list_hubs():
+        h = dict(h)
+        h.setdefault("sync_mode", "hub")  # normalise new-format hubs for templates
+        h["last_sync"] = db.get_last_sync(db_path, h["name"])
+        h["cache_last_updated"] = db.get_cache_last_updated(db_path, h["name"])
+        h["cache_record_counts"] = db.get_cache_record_counts(db_path, h["name"])
+        hub.append(h)
+        hub_names.add(h["name"])
+    spokes = []
+    for s in cfg.list_servers():
+        if s["name"] in hub_names:
+            continue
         s = dict(s)
         s["last_sync"] = db.get_last_sync(db_path, s["name"])
-        if s.get("sync_mode") == "hub":
-            s["cache_last_updated"] = db.get_cache_last_updated(db_path, s["name"])
-            s["cache_record_counts"] = db.get_cache_record_counts(db_path, s["name"])
-            hub.append(s)
-        else:
+        s["spoke_record_counts"] = db.get_spoke_record_counts(db_path, s["name"])
+        spokes.append(s)
+    return hub, spokes
+
+
+def _spoke_groups_context(request: Request) -> list:
+    """Return hub list each with 'spokes' attached — used by grouped spokes endpoints."""
+    cfg = request.app.state.config
+    db_path = request.app.state.db_path
+    groups = []
+    for hub_cfg in cfg.list_hubs():
+        hub = dict(hub_cfg)
+        hub.setdefault("sync_mode", "hub")
+        hub["last_sync"] = db.get_last_sync(db_path, hub["name"])
+        hub["cache_last_updated"] = db.get_cache_last_updated(db_path, hub["name"])
+        hub["cache_record_counts"] = db.get_cache_record_counts(db_path, hub["name"])
+        spokes = []
+        for s in cfg.list_spokes_for_hub(hub["name"]):
+            s = dict(s)
+            s["last_sync"] = db.get_last_sync(db_path, s["name"])
             s["spoke_record_counts"] = db.get_spoke_record_counts(db_path, s["name"])
             spokes.append(s)
-    return hub, spokes
+        hub["spokes"] = spokes
+        groups.append(hub)
+    return groups
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +339,7 @@ def dashboard(request: Request):
     if (redir := auth.login_required(request)):
         return redir
     hub, spokes = _split_servers(request)
-    history = db.get_history(request.app.state.db_path)
+    history = db.get_history(request.app.state.db_path, limit=50)
 
     # Aggregate status — exclude disabled spokes
     active_spokes = [s for s in spokes if s.get("enabled", True)]
@@ -282,10 +354,12 @@ def dashboard(request: Request):
         {
             "request": request,
             "hub": hub,
+            "hubs": _spoke_groups_context(request),
             "spokes": spokes,
             "history": history,
             "summary": summary,
             "selected_server": "",
+            "theme": _get_theme(request.app.state.db_path),
             **settings_ctx,
         },
     )
@@ -299,32 +373,54 @@ def server_cards(request: Request, role: str = "spoke"):
     servers = spokes if role == "spoke" else hub
     return templates.TemplateResponse(
         "partials/server_cards.html",
-        {"request": request, "servers": servers},
+        {"request": request, "servers": servers, "theme": _get_theme(request.app.state.db_path)},
     )
 
 
 @app.get("/api/history", response_class=HTMLResponse)
-def history_partial(request: Request, server: str = ""):
+def history_partial(request: Request, server: str = "", hub: str = ""):
     if (redir := auth.login_required(request)):
         return redir
-    history = db.get_history(request.app.state.db_path, server_name=server or None)
-    spokes = [s for s in request.app.state.config.list_servers() if s.get("sync_mode") != "hub"]
+    cfg = request.app.state.config
+    db_path = request.app.state.db_path
+    history = db.get_history(db_path, server_name=server or None, hub_name=hub or None, limit=50)
+    hub_names = {h["name"] for h in cfg.list_hubs()}
+    spokes = [s for s in cfg.list_servers() if s["name"] not in hub_names]
     return templates.TemplateResponse(
         "partials/history.html",
-        {"request": request, "history": history, "spokes": spokes, "selected_server": server},
+        {
+            "request": request,
+            "history": history,
+            "hubs": cfg.list_hubs(),
+            "spokes": spokes,
+            "selected_server": server,
+            "selected_hub": hub,
+            "theme": _get_theme(db_path),
+        },
     )
 
 
 @app.delete("/api/history", response_class=HTMLResponse)
-def clear_history(request: Request, server: str = ""):
+def clear_history_route(request: Request, server: str = "", hub: str = ""):
     if (redir := auth.login_required(request)):
         return redir
-    db.clear_history(request.app.state.db_path, server_name=server or None)
-    history = db.get_history(request.app.state.db_path, server_name=None)
-    spokes = [s for s in request.app.state.config.list_servers() if s.get("sync_mode") != "hub"]
+    cfg = request.app.state.config
+    db_path = request.app.state.db_path
+    db.clear_history(db_path, server_name=server or None, hub_name=hub or None)
+    history = db.get_history(db_path)
+    hub_names = {h["name"] for h in cfg.list_hubs()}
+    spokes = [s for s in cfg.list_servers() if s["name"] not in hub_names]
     return templates.TemplateResponse(
         "partials/history.html",
-        {"request": request, "history": history, "spokes": spokes, "selected_server": ""},
+        {
+            "request": request,
+            "history": history,
+            "hubs": cfg.list_hubs(),
+            "spokes": spokes,
+            "selected_server": "",
+            "selected_hub": "",
+            "theme": _get_theme(db_path),
+        },
     )
 
 
@@ -341,11 +437,24 @@ async def trigger_sync(server_name: str, request: Request):
     if not spoke_cfg:
         return HTMLResponse(f"<p>Server {server_name!r} not found.</p>", status_code=404)
 
-    hub_cfg = next(
-        (s for s in cfg.list_servers() if s.get("sync_mode") == "hub"), None
-    )
+    # Resolve hub: new format uses hub: field; legacy falls back to sole hub
+    hub_name = spoke_cfg.get("hub")
+    if hub_name:
+        hub_cfg = cfg.get_server(hub_name)
+    else:
+        hub_cfgs = cfg.list_hubs()
+        if len(hub_cfgs) == 1:
+            hub_cfg = hub_cfgs[0]
+        elif len(hub_cfgs) > 1:
+            return HTMLResponse(
+                "<p>Spoke has no hub: field and multiple hubs are configured.</p>",
+                status_code=400,
+            )
+        else:
+            hub_cfg = None
+
     if not hub_cfg:
-        return HTMLResponse("<p>No hub server configured.</p>", status_code=400)
+        return HTMLResponse("<p>No hub configured for this spoke.</p>", status_code=400)
 
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(
@@ -357,7 +466,7 @@ async def trigger_sync(server_name: str, request: Request):
     spoke_cfg["spoke_record_counts"] = db.get_spoke_record_counts(db_path, server_name)
     return templates.TemplateResponse(
         "partials/server_card.html",
-        {"request": request, "server": spoke_cfg},
+        {"request": request, "server": spoke_cfg, "theme": _get_theme(db_path)},
     )
 
 
@@ -370,46 +479,25 @@ async def sync_all(request: Request):
     secrets = request.app.state.secrets
     db_path = request.app.state.db_path
 
-    hub_cfg = next(
-        (s for s in cfg.list_servers() if s.get("sync_mode") == "hub"), None
-    )
-    if not hub_cfg:
+    hub_cfgs = cfg.list_hubs()
+    if not hub_cfgs:
         return HTMLResponse(
-            "<p class='text-red-400 text-sm col-span-full py-4'>No hub server configured.</p>",
+            "<p class='text-red-400 text-sm col-span-full py-4'>No hub configured.</p>",
             status_code=400,
         )
 
-    spoke_cfgs = [s for s in cfg.list_servers() if s.get("sync_mode") != "hub"]
+    await _run_hub_sync_cycle(db_path, hub_cfgs, cfg, secrets)
 
-    loop = asyncio.get_running_loop()
-    # Refresh hub once, then sync all spokes against fresh cache
-    hub_records = await loop.run_in_executor(
-        None, sync_engine.refresh_hub_cache, db_path, hub_cfg, secrets
+    # Return grouped spokes HTML — same template as /api/servers/spokes poll (M7)
+    hub_groups = _spoke_groups_context(request)
+    return templates.TemplateResponse(
+        "partials/hub_spoke_groups.html",
+        {"request": request, "hubs": hub_groups, "theme": _get_theme(db_path)},
     )
-    if hub_records is not None:
-        await loop.run_in_executor(
-            None, sync_engine.sync_all_enabled_spokes, db_path, hub_cfg, spoke_cfgs, secrets
-        )
-
-    # Re-fetch all spokes (including disabled) with updated last_sync
-    _, all_spokes = _split_servers(request)
-
-    # Render each spoke card and concatenate
-    html_parts = []
-    card_tpl = templates.get_template("partials/server_card.html")
-    for server in all_spokes:
-        html_parts.append(card_tpl.render(server=server, request=request))
-
-    if not html_parts:
-        return HTMLResponse(
-            "<p class='text-gray-500 text-sm col-span-full py-4'>No spokes configured.</p>"
-        )
-
-    return HTMLResponse("".join(html_parts))
 
 
 @app.post("/api/hub/refresh", response_class=HTMLResponse)
-async def hub_refresh(request: Request):
+async def hub_refresh(request: Request, hub: str = ""):
     if (redir := auth.login_required(request)):
         return redir
 
@@ -417,12 +505,15 @@ async def hub_refresh(request: Request):
     secrets = request.app.state.secrets
     db_path = request.app.state.db_path
 
-    hub_cfg = next(
-        (s for s in cfg.list_servers() if s.get("sync_mode") == "hub"), None
-    )
+    if hub:
+        hub_cfg = cfg.get_server(hub)
+    else:
+        hub_cfgs = cfg.list_hubs()
+        hub_cfg = hub_cfgs[0] if hub_cfgs else None
+
     if not hub_cfg:
         return HTMLResponse(
-            "<p class='text-red-400 text-sm'>No hub server configured.</p>",
+            "<p class='text-red-400 text-sm'>Hub not found.</p>",
             status_code=400,
         )
 
@@ -432,12 +523,25 @@ async def hub_refresh(request: Request):
     )
 
     hub_cfg = dict(hub_cfg)
+    hub_cfg.setdefault("sync_mode", "hub")
     hub_cfg["last_sync"] = db.get_last_sync(db_path, hub_cfg["name"])
     hub_cfg["cache_last_updated"] = db.get_cache_last_updated(db_path, hub_cfg["name"])
     hub_cfg["cache_record_counts"] = db.get_cache_record_counts(db_path, hub_cfg["name"])
     return templates.TemplateResponse(
         "partials/server_card.html",
-        {"request": request, "server": hub_cfg},
+        {"request": request, "server": hub_cfg, "theme": _get_theme(db_path)},
+    )
+
+
+@app.get("/api/servers/spokes", response_class=HTMLResponse)
+def spoke_groups(request: Request):
+    """Grouped spokes by hub — used by 30s poll and sync-all response (same template)."""
+    if (redir := auth.login_required(request)):
+        return redir
+    hub_groups = _spoke_groups_context(request)
+    return templates.TemplateResponse(
+        "partials/hub_spoke_groups.html",
+        {"request": request, "hubs": hub_groups, "theme": _get_theme(request.app.state.db_path)},
     )
 
 
@@ -456,7 +560,7 @@ def toggle_server(server_name: str, request: Request):
     server["spoke_record_counts"] = db.get_spoke_record_counts(db_path, server_name)
     return templates.TemplateResponse(
         "partials/server_card.html",
-        {"request": request, "server": server},
+        {"request": request, "server": server, "theme": _get_theme(db_path)},
     )
 
 
@@ -510,7 +614,7 @@ async def clear_spoke_records(server_name: str, request: Request):
     server["spoke_record_counts"] = db.get_spoke_record_counts(db_path, server_name)
     return templates.TemplateResponse(
         "partials/server_card.html",
-        {"request": request, "server": server},
+        {"request": request, "server": server, "theme": _get_theme(db_path)},
     )
 
 
@@ -526,12 +630,42 @@ def remove_server(server_name: str, request: Request):
 # Settings endpoints
 # ---------------------------------------------------------------------------
 
+def _interval_display(minutes: int) -> tuple[int, str, str]:
+    """Return (value, unit, display_label) for a minutes value.
+
+    Converts to the largest whole unit:
+      1440 min → (1, "days",    "1 day")
+       120 min → (2, "hours",   "2 hours")
+        60 min → (1, "hours",   "1 hour")
+        30 min → (30, "minutes", "30 minutes")
+    """
+    if minutes % 1440 == 0:
+        val = minutes // 1440
+        unit = "days"
+        label = f"{val} day" if val == 1 else f"{val} days"
+    elif minutes % 60 == 0:
+        val = minutes // 60
+        unit = "hours"
+        label = f"{val} hour" if val == 1 else f"{val} hours"
+    else:
+        val = minutes
+        unit = "minutes"
+        label = f"{val} minute" if val == 1 else f"{val} minutes"
+    return val, unit, label
+
+
 def _settings_context(db_path: str, next_sync_at: Optional[str]) -> dict:
     settings = _load_settings(db_path)
+    minutes = settings.get("interval_minutes", 30)
+    interval_value, interval_unit, interval_label = _interval_display(minutes)
     return {
-        "interval_minutes": settings.get("interval_minutes", 30),
+        "interval_minutes": minutes,
+        "interval_value": interval_value,
+        "interval_unit": interval_unit,
+        "interval_label": interval_label,
         "enabled": settings.get("enabled", True),
         "next_sync_at": next_sync_at,
+        "theme": settings.get("theme", "storm"),
     }
 
 
@@ -551,8 +685,12 @@ async def save_settings(request: Request):
     if (redir := auth.login_required(request)):
         return redir
     form = await request.form()
+    _UNIT_MULTIPLIERS = {"minutes": 1, "hours": 60, "days": 1440}
     try:
-        interval = max(1, min(1440, int(form.get("interval_minutes", 30))))
+        raw_value = int(form.get("interval_value", 30))
+        unit = form.get("unit", "minutes")
+        multiplier = _UNIT_MULTIPLIERS.get(unit, 1)
+        interval = max(1, min(10080, raw_value * multiplier))  # cap at 7 days
     except (TypeError, ValueError):
         interval = 30
     db_path = request.app.state.db_path
@@ -602,3 +740,22 @@ def disable_sync(request: Request):
         "partials/settings.html",
         {"request": request, **ctx},
     )
+
+
+def _get_theme(db_path: str) -> str:
+    return _load_settings(db_path).get("theme", "storm")
+
+
+@app.post("/api/settings/theme")
+async def set_theme(request: Request):
+    if (redir := auth.login_required(request)):
+        return redir
+    data = await request.json()
+    theme = data.get("theme", "storm")
+    if theme not in ("storm", "midnight", "dusk"):
+        return JSONResponse({"error": "invalid theme"}, status_code=400)
+    db_path = request.app.state.db_path
+    settings = _load_settings(db_path)
+    settings["theme"] = theme
+    _save_settings(db_path, settings)
+    return JSONResponse({"ok": True})
